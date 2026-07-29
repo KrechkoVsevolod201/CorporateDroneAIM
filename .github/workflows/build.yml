@@ -28,30 +28,17 @@ jobs:
       run: |
         python -m PyInstaller --noconfirm --clean CorporateDroneAIM.spec
         
-    - name: Install Inno Setup via winget
-      run: |
-        winget install --id JRSoftware.InnoSetup --accept-source-agreements --accept-package-agreements
-        
-    - name: Build installer
-      run: |
-        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
-        
-    - name: Upload artifacts
+    - name: Upload exe artifact
       uses: actions/upload-artifact@v4
       with:
-        name: CorporateDroneAIM
-        path: |
-          dist/CorporateDroneAIM.exe
-          installer_output/CorporateDroneAIM_Setup.exe
+        name: CorporateDroneAIM-exe
+        path: dist/CorporateDroneAIM.exe
           
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          dist/CorporateDroneAIM.exe
-          installer_output/CorporateDroneAIM_Setup.exe
+        files: dist/CorporateDroneAIM.exe
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
