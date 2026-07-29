@@ -28,15 +28,13 @@ jobs:
       run: |
         python -m PyInstaller --noconfirm --clean CorporateDroneAIM.spec
         
-    - name: Install Inno Setup
+    - name: Install Inno Setup via winget
       run: |
-        $innoUrl = "https://jrsoftware.org/download.php/is.exe"
-        $innoPath = "$env:TEMP\innosetup.exe"
-        Invoke-WebRequest -Uri $innoUrl -OutFile $innoPath -UseBasicParsing
-        Start-Process -FilePath $innoPath -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+        winget install --id JRSoftware.InnoSetup --accept-source-agreements --accept-package-agreements
         
     - name: Build installer
       run: |
+        $env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
         
     - name: Upload artifacts
