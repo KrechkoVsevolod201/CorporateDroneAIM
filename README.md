@@ -22,10 +22,12 @@ Fully customizable: from weapon skins to the sound of gunshots and falling shell
 
 ### Для обычных пользователей (рекомендуется)
 
-1. Скачайте последний релиз с [GitHub Releases](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/releases)
-2. Запустите `CorporateDroneAIM_Setup.exe`
-3. Следуйте инструкциям установщика
+1. Перейдите на страницу [Releases](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/releases)
+2. Скачайте `CorporateDroneAIM_Setup.exe` (последняя версия)
+3. Запустите установщик и следуйте инструкциям
 4. Программа создаст ярлык на рабочем столе и в меню Пуск
+
+**Всё готово!** Инсталлятор автоматически установит программу со всеми необходимыми файлами.
 
 ### Альтернативная установка (без установщика)
 
