@@ -161,12 +161,25 @@ class WeaponPose:
     hands_id: str
     recoil_x: float
     recoil_y: float
+    flip: float = 1.0  # -1..1 springy horizontal facing
+    pitch: float = -0.7
     use_custom_weapon: bool = False
     custom_weapon: str = ""
     custom_weapon_scale: float = 1.0
     use_custom_gloves: bool = False
     custom_gloves: str = ""
     custom_gloves_scale: float = 1.0
+
+
+@dataclass
+class AimState:
+    """Persistent aim/flip spring state across frames."""
+
+    angle: float | None = None
+    pitch: float | None = None
+    facing: float = 1.0  # discrete target -1 or 1
+    flip: float = 1.0  # spring value
+    flip_v: float = 0.0
 
 
 _IMAGE_CACHE: dict[str, pygame.Surface] = {}
@@ -195,33 +208,35 @@ def _blit_rotated(
     angle: float,
     scale: float,
     origin: tuple[float, float],
+    flip: float = 1.0,
 ) -> None:
-    """Blit image rotated around origin in image space; origin maps to pivot on screen.
+    """Blit image rotated around origin; local +X = barrel forward.
 
-    Image local +X (right) aligns with barrel forward (math angle).
+    flip in [-1, 1]: horizontal facing with squash near 0 (edge-on flip).
     """
     w, h = image.get_size()
-    sw = max(1, int(round(w * scale)))
-    sh = max(1, int(round(h * scale)))
-    if sw != w or sh != h:
-        scaled = pygame.transform.smoothscale(image, (sw, sh))
-    else:
-        scaled = image
+    face = 1.0 if flip >= 0 else -1.0
+    squash = max(0.06, abs(flip))
+    sw = max(1, int(round(w * scale * squash)))
+    sh = max(1, int(round(h * scale * (1.0 + (1.0 - squash) * 0.12))))
+    scaled = pygame.transform.smoothscale(image, (sw, sh))
+    if face < 0:
+        scaled = pygame.transform.flip(scaled, False, True)
 
-    ox = origin[0] * scale
-    oy = origin[1] * scale
-    # pygame positive rotation = CCW; screen y-down math angle needs negation
+    ox = origin[0] / max(1, w) * sw
+    oy = origin[1] / max(1, h) * sh
+    if face < 0:
+        oy = sh - oy
+
     deg = -math.degrees(angle)
     rotated = pygame.transform.rotate(scaled, deg)
     rw, rh = rotated.get_size()
 
-    # vector from image origin to center, then rotate
     cx = sw * 0.5
     cy = sh * 0.5
     dx = cx - ox
     dy = cy - oy
     ca, sa = math.cos(angle), math.sin(angle)
-    # screen rotation matches our tf(): (x',y') = (x ca - y sa, x sa + y ca)
     rdx = dx * ca - dy * sa
     rdy = dx * sa + dy * ca
     blit_x = pivot[0] + rdx - rw * 0.5
@@ -250,6 +265,27 @@ def smooth_angle(current: float | None, target: float, dt: float, speed: float =
     return current + delta * t
 
 
+def _spring_flip(state: AimState, target: float, dt: float) -> None:
+    """Critically-damped-ish spring with overshoot for mirror flip."""
+    stiffness = 85.0
+    damping = 12.0
+    # kick when target changes mid-motion
+    force = (target - state.flip) * stiffness - state.flip_v * damping
+    state.flip_v += force * dt
+    state.flip += state.flip_v * dt
+    # soft clamp with bounce residual
+    if state.flip > 1.25:
+        state.flip = 1.25
+        state.flip_v *= -0.35
+    elif state.flip < -1.25:
+        state.flip = -1.25
+        state.flip_v *= -0.35
+    # settle near target
+    if abs(target - state.flip) < 0.002 and abs(state.flip_v) < 0.05:
+        state.flip = target
+        state.flip_v = 0.0
+
+
 def compute_weapon_pose(
     screen_size: tuple[int, int],
     weapon_id: str,
@@ -258,7 +294,7 @@ def compute_weapon_pose(
     offset: tuple[float, float],
     recoil: tuple[float, float],
     cursor: tuple[float, float],
-    current_angle: float | None = None,
+    aim: AimState | None = None,
     dt: float = 1.0 / 60.0,
     *,
     use_custom_weapon: bool = False,
@@ -268,7 +304,10 @@ def compute_weapon_pose(
     custom_gloves: str = "",
     custom_gloves_scale: float = 1.0,
 ) -> WeaponPose:
-    """Pivot at grip; barrel +X aims at cursor. Muzzle lies on that ray."""
+    """Aim with pitch + horizontal mirror flip (no full 360 spin)."""
+    if aim is None:
+        aim = AimState()
+
     w, h = screen_size
     profile = PROFILES.get(weapon_id, PROFILES["rifle"])
     ox, oy = offset
@@ -279,20 +318,51 @@ def compute_weapon_pose(
     base_y = h * 0.93 + oy + ry
 
     cx, cy = cursor
-    target = _angle_to(base_x, base_y, cx, cy)
+    dx = cx - base_x
+    dy = cy - base_y
 
-    min_a = -math.pi + 0.08
-    max_a = -0.02
-    if cy >= base_y:
-        target = min_a if cx < base_x else max_a
+    # Hysteresis so tiny jitter over the gun doesn't spam-flip
+    dead = 28.0
+    if dx > dead:
+        aim.facing = 1.0
+    elif dx < -dead:
+        aim.facing = -1.0
+
+    _spring_flip(aim, aim.facing, dt)
+
+    # Pitch from horizontal using absolute horizontal offset (upper hemisphere)
+    horiz = max(abs(dx), 12.0)
+    if dy >= 0:
+        # below gun — keep nearly horizontal forward
+        target_pitch = -0.08
     else:
-        target = max(min_a, min(max_a, target))
+        target_pitch = math.atan2(dy, horiz)  # ~ -pi/2 .. 0
+        target_pitch = max(-1.35, min(-0.05, target_pitch))
 
-    angle = smooth_angle(current_angle, target, dt, speed=22.0)
+    if aim.pitch is None:
+        aim.pitch = target_pitch
+    else:
+        aim.pitch = smooth_angle(aim.pitch, target_pitch, dt, speed=16.0)
+
+    # World barrel angle from pitch + continuous flip (passes through vertical)
+    # face~1: angle = pitch; face~-1: angle = pi - pitch (mirrored over vertical)
+    face = max(-1.0, min(1.0, aim.flip))
+    cos_p = math.cos(aim.pitch)
+    sin_p = math.sin(aim.pitch)
+    ang_x = cos_p * face
+    ang_y = sin_p
+    # stabilize when face ~ 0 (edge-on): aim straight up
+    if abs(face) < 0.08:
+        ang_x = face * 0.08
+        ang_y = -1.0
+    angle = math.atan2(ang_y, ang_x)
+    aim.angle = angle
 
     muzzle_local_x = _muzzle_distance(
         profile, s, use_custom_weapon, custom_weapon, custom_weapon_scale
     )
+    # squash muzzle distance during flip for visual consistency
+    muzzle_local_x *= max(0.15, abs(face))
     ca, sa = math.cos(angle), math.sin(angle)
     muzzle_x = base_x + muzzle_local_x * ca
     muzzle_y = base_y + muzzle_local_x * sa
@@ -308,6 +378,8 @@ def compute_weapon_pose(
         hands_id=hands_id,
         recoil_x=rx,
         recoil_y=ry,
+        flip=face,
+        pitch=float(aim.pitch),
         use_custom_weapon=use_custom_weapon,
         custom_weapon=custom_weapon,
         custom_weapon_scale=custom_weapon_scale,
@@ -368,6 +440,23 @@ def draw_weapon_view(surface: pygame.Surface, pose: WeaponPose) -> None:
     _blit_custom_weapon(surface, pose, custom_w)
 
 
+def _make_tf(pose: WeaponPose):
+    s = pose.scale
+    ang = pose.angle
+    ca, sa = math.cos(ang), math.sin(ang)
+    base_x, base_y = pose.base_x, pose.base_y
+    face = 1.0 if pose.flip >= 0 else -1.0
+    squash = max(0.08, abs(pose.flip))
+
+    def tf(px: float, py: float) -> tuple[float, float]:
+        # squash along barrel during flip; mirror local Y when facing left
+        lx = px * s * squash
+        ly = py * s * face
+        return base_x + lx * ca - ly * sa, base_y + lx * sa + ly * ca
+
+    return tf
+
+
 def _blit_custom_gloves(surface: pygame.Surface, pose: WeaponPose, gloves_img: pygame.Surface) -> None:
     gw, gh = gloves_img.get_size()
     g_scale = pose.scale * pose.custom_gloves_scale * 0.55
@@ -378,6 +467,7 @@ def _blit_custom_gloves(surface: pygame.Surface, pose: WeaponPose, gloves_img: p
         angle=pose.angle,
         scale=g_scale,
         origin=(gw * 0.45, gh * 0.55),
+        flip=pose.flip,
     )
 
 
@@ -392,21 +482,15 @@ def _blit_custom_weapon(surface: pygame.Surface, pose: WeaponPose, weapon_img: p
         angle=pose.angle,
         scale=w_scale,
         origin=(ww * 0.22, wh * 0.62),
+        flip=pose.flip,
     )
 
 
 def _draw_procedural_hands_only(surface: pygame.Surface, pose: WeaponPose) -> None:
     profile = PROFILES.get(pose.weapon_id, PROFILES["rifle"])
     palette = HAND_PALETTES.get(pose.hands_id, HAND_PALETTES["tactical"])
-    s = pose.scale
-    ang = pose.angle
-    ca, sa = math.cos(ang), math.sin(ang)
-    base_x, base_y = pose.base_x, pose.base_y
     bw, bh = profile.body_w, profile.body_h
-
-    def tf(px: float, py: float) -> tuple[float, float]:
-        lx, ly = px * s, py * s
-        return base_x + lx * ca - ly * sa, base_y + lx * sa + ly * ca
+    tf = _make_tf(pose)
 
     _poly(
         surface,
@@ -445,14 +529,7 @@ def _draw_procedural_full(surface: pygame.Surface, pose: WeaponPose) -> None:
     profile = PROFILES.get(pose.weapon_id, PROFILES["rifle"])
     palette = HAND_PALETTES.get(pose.hands_id, HAND_PALETTES["tactical"])
     s = pose.scale
-    ang = pose.angle
-    ca, sa = math.cos(ang), math.sin(ang)
-    base_x, base_y = pose.base_x, pose.base_y
-
-    def tf(px: float, py: float) -> tuple[float, float]:
-        lx = px * s
-        ly = py * s
-        return base_x + lx * ca - ly * sa, base_y + lx * sa + ly * ca
+    tf = _make_tf(pose)
 
     body = profile.color_body
     metal = profile.color_metal

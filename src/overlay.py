@@ -9,11 +9,20 @@ import pygame
 
 from .audio import SoundManager
 from .config import Config
+from .crosshair import draw_crosshair
 from .display_info import Monitor, list_monitors, monitor_from_point
 from .effects import EffectSystem
-from .weapons import WeaponPose, compute_weapon_pose, draw_weapon_view
+from .weapons import AimState, WeaponPose, compute_weapon_pose, draw_weapon_view
 
 COLOR_KEY = (255, 0, 255)
+
+CONTROLS_LINES = [
+    ("ЛКМ", "Выстрел"),
+    ("F1", "Открыть / показать настройки"),
+    ("F2", "Следующее оружие"),
+    ("H", "Показать / скрыть подсказки"),
+    ("Esc", "Выход"),
+]
 
 
 def win32api_colorref(rgb: tuple[int, int, int]) -> int:
@@ -78,7 +87,7 @@ class OverlayApp:
         self._hwnd = 0
         self._clock = pygame.time.Clock()
         self._pose: WeaponPose | None = None
-        self._aim_angle: float | None = None
+        self._aim = AimState()
         self._style_dirty = threading.Event()
         self._style_dirty.set()
         self._applied_opacity: float | None = None
@@ -86,6 +95,8 @@ class OverlayApp:
         self._monitor: Monitor | None = None
         self._monitors_cache: list[Monitor] = []
         self._monitors_refresh_at = 0.0
+        self._font: pygame.font.Font | None = None
+        self._font_sm: pygame.font.Font | None = None
 
     def _start_mouse_hook(self) -> None:
         try:
@@ -123,7 +134,6 @@ class OverlayApp:
 
     def _create_window(self, monitor: Monitor) -> None:
         pygame.display.set_caption("CorporateDroneAIM Overlay")
-        # Place window on target monitor before/after mode set
         if sys.platform == "win32":
             import os
 
@@ -135,13 +145,12 @@ class OverlayApp:
         self._hwnd = int(wm.get("window", 0) or 0)
         self._monitor = monitor
         self._apply_window_style(force=True, move_rect=monitor)
-        self._aim_angle = None
+        self._aim = AimState()
         self.effects.clear()
 
     def _switch_monitor(self, monitor: Monitor) -> None:
         if self._monitor is not None and self._monitor.key() == monitor.key():
             return
-        # Resize surface if needed; always re-position via Win32
         if self.screen is None or self.screen.get_size() != (monitor.width, monitor.height):
             flags = pygame.NOFRAME | pygame.DOUBLEBUF
             self.screen = pygame.display.set_mode((monitor.width, monitor.height), flags)
@@ -149,7 +158,7 @@ class OverlayApp:
             self._hwnd = int(wm.get("window", 0) or 0)
         self._monitor = monitor
         self._apply_window_style(force=True, move_rect=monitor)
-        self._aim_angle = None
+        self._aim = AimState()
         self.effects.clear()
 
     def _on_config_changed(self, _data: dict) -> None:
@@ -161,7 +170,6 @@ class OverlayApp:
         cfg = self.config.as_dict()
         opacity = float(cfg["opacity"])
         topmost = bool(cfg["always_on_top"])
-        mon = move_rect or self._monitor
         need_move = move_rect is not None
         if (
             not force
@@ -172,6 +180,7 @@ class OverlayApp:
             self._style_dirty.clear()
             return
 
+        mon = move_rect or self._monitor
         rect = None
         if mon is not None:
             rect = (mon.x, mon.y, mon.width, mon.height)
@@ -195,6 +204,9 @@ class OverlayApp:
         pygame.init()
         pygame.font.init()
         self.audio = SoundManager()
+        self._font = pygame.font.SysFont("segoeui", 15)
+        self._font_sm = pygame.font.SysFont("segoeui", 13)
+        self._font_bold = pygame.font.SysFont("segoeui", 14, bold=True)
 
         mons = self._refresh_monitors(force=True)
         cx, cy = self._cursor_pos_abs()
@@ -206,9 +218,7 @@ class OverlayApp:
         self.audio.configure(cfg0)
         self.audio.preload(str(cfg0.get("shot_sound") or ""), str(cfg0.get("shell_sound") or ""))
 
-        font = pygame.font.SysFont("consolas", 16)
         self._running = True
-        hint_until = time.time() + 5.0
 
         while self._running:
             dt = self._clock.tick(60) / 1000.0
@@ -238,6 +248,11 @@ class OverlayApp:
                         self._running = False
                     elif event.key == pygame.K_F1 and self.on_open_settings:
                         self.on_open_settings()
+                    elif event.key == pygame.K_h:
+                        self.config.update(
+                            immediate_save=True,
+                            show_controls=not bool(cfg.get("show_controls", True)),
+                        )
                     elif event.key == pygame.K_F2:
                         from .config import WEAPONS
 
@@ -256,7 +271,7 @@ class OverlayApp:
                 offset=(float(cfg["offset_x"]), float(cfg["offset_y"])),
                 recoil=self.effects.recoil_offset,
                 cursor=cursor_local,
-                current_angle=self._aim_angle,
+                aim=self._aim,
                 dt=dt,
                 use_custom_weapon=bool(cfg.get("use_custom_weapon")),
                 custom_weapon=str(cfg.get("custom_weapon") or ""),
@@ -265,7 +280,6 @@ class OverlayApp:
                 custom_gloves=str(cfg.get("custom_gloves") or ""),
                 custom_gloves_scale=float(cfg.get("custom_gloves_scale", 1.0)),
             )
-            self._aim_angle = self._pose.angle
 
             pressed = bool(self._global_buttons.get(1))
             if not self._listener:
@@ -279,7 +293,7 @@ class OverlayApp:
                     self._last_shot = now
 
             self.effects.update(dt)
-            self._draw_frame(cfg, font, hint_until, cursor_local)
+            self._draw_frame(cfg, cursor_local)
 
         self.config.save(force=True)
         self._stop_mouse_hook()
@@ -311,19 +325,60 @@ class OverlayApp:
             recoil=cfg["recoil"],
             shell_eject=cfg["shell_eject"],
             barrel_angle=self._pose.angle,
+            tracer_style=str(cfg.get("tracer_style", "glow")),
+            tracer_width=float(cfg.get("tracer_width", 2.5)),
+            tracer_duration=float(cfg.get("tracer_duration", 0.08)),
+            tracer_opacity=float(cfg.get("tracer_opacity", 0.95)),
+            tracer_color=(
+                int(cfg.get("tracer_r", 255)),
+                int(cfg.get("tracer_g", 220)),
+                int(cfg.get("tracer_b", 90)),
+            ),
         )
         if self.audio is not None:
             self.audio.play_shot()
             if cfg.get("shell_eject"):
                 self.audio.queue_shell_drop(delay=0.30)
 
-    def _draw_frame(
-        self,
-        cfg: dict,
-        font: pygame.font.Font,
-        hint_until: float,
-        cursor_local: tuple[int, int],
-    ) -> None:
+    def _draw_controls_panel(self, cfg: dict) -> None:
+        assert self.screen is not None
+        if not cfg.get("show_controls", True):
+            return
+        font = self._font_sm or pygame.font.SysFont("segoeui", 13)
+        title_font = self._font_bold or pygame.font.SysFont("segoeui", 14, bold=True)
+        op = float(cfg.get("controls_opacity", 0.72))
+        pad = 14
+        row_h = 22
+        title = "Управление"
+        lines = CONTROLS_LINES
+        width = 280
+        height = pad * 2 + 28 + row_h * len(lines) + 8
+        panel = pygame.Surface((width, height), pygame.SRCALPHA)
+        bg_a = int(170 * op)
+        pygame.draw.rect(panel, (12, 14, 20, bg_a), panel.get_rect(), border_radius=12)
+        pygame.draw.rect(panel, (80, 160, 255, int(90 * op)), panel.get_rect(), width=1, border_radius=12)
+
+        title_s = title_font.render(title, True, (230, 236, 255))
+        panel.blit(title_s, (pad, pad))
+
+        y = pad + 28
+        key_col = (120, 190, 255)
+        desc_col = (210, 214, 224)
+        for key, desc in lines:
+            ks = font.render(key, True, key_col)
+            ds = font.render(desc, True, desc_col)
+            # key chip
+            chip_w = ks.get_width() + 12
+            chip = pygame.Surface((chip_w, 18), pygame.SRCALPHA)
+            pygame.draw.rect(chip, (40, 50, 70, int(200 * op)), chip.get_rect(), border_radius=5)
+            chip.blit(ks, (6, 1))
+            panel.blit(chip, (pad, y))
+            panel.blit(ds, (pad + 78, y + 1))
+            y += row_h
+
+        self.screen.blit(panel, (16, 16))
+
+    def _draw_frame(self, cfg: dict, cursor_local: tuple[int, int]) -> None:
         assert self.screen is not None
         assert self._pose is not None
         self.screen.fill(COLOR_KEY)
@@ -332,22 +387,21 @@ class OverlayApp:
         self.effects.draw(self.screen)
 
         cx, cy = cursor_local
-        if cfg["impact"]:
-            layer = pygame.Surface((20, 20), pygame.SRCALPHA)
-            pygame.draw.circle(layer, (255, 255, 255, 40), (10, 10), 6, 1)
-            self.screen.blit(layer, (cx - 10, cy - 10))
+        draw_crosshair(
+            self.screen,
+            (cx, cy),
+            enabled=bool(cfg.get("crosshair", True)),
+            style=str(cfg.get("crosshair_style", "cross")),
+            size=float(cfg.get("crosshair_size", 14)),
+            thickness=float(cfg.get("crosshair_thickness", 2)),
+            gap=float(cfg.get("crosshair_gap", 4)),
+            opacity=float(cfg.get("crosshair_opacity", 0.85)),
+            color=(
+                int(cfg.get("crosshair_r", 255)),
+                int(cfg.get("crosshair_g", 255)),
+                int(cfg.get("crosshair_b", 255)),
+            ),
+        )
 
-        if time.time() < hint_until:
-            mon = self._monitor
-            mon_txt = f"{mon.width}x{mon.height} @ {mon.x},{mon.y}" if mon else "?"
-            text = font.render(
-                f"CorporateDroneAIM  |  LMB  |  F1  |  F2  |  Esc  |  {mon_txt}",
-                True,
-                (230, 230, 230),
-            )
-            bg = pygame.Surface((text.get_width() + 12, text.get_height() + 8), pygame.SRCALPHA)
-            bg.fill((0, 0, 0, 140))
-            self.screen.blit(bg, (12, 12))
-            self.screen.blit(text, (18, 16))
-
+        self._draw_controls_panel(cfg)
         pygame.display.flip()

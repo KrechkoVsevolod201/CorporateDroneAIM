@@ -32,6 +32,8 @@ class Tracer:
     max_life: float
     width: float
     color: tuple[int, int, int] = (255, 230, 120)
+    opacity: float = 1.0
+    style: str = "glow"
 
 
 @dataclass
@@ -97,6 +99,11 @@ class EffectSystem:
         recoil: bool,
         shell_eject: bool,
         barrel_angle: float | None = None,
+        tracer_style: str = "glow",
+        tracer_width: float | None = None,
+        tracer_duration: float = 0.08,
+        tracer_opacity: float = 0.95,
+        tracer_color: tuple[int, int, int] = (255, 220, 90),
     ) -> None:
         profile = PROFILES.get(weapon_id, PROFILES["rifle"])
         mx, my = muzzle
@@ -104,6 +111,8 @@ class EffectSystem:
         # Prefer weapon barrel angle so flash/tracer match the drawn gun
         angle = float(barrel_angle) if barrel_angle is not None else math.atan2(ty - my, tx - mx)
         dist = max(1.0, math.hypot(tx - mx, ty - my))
+        tw = float(tracer_width) if tracer_width is not None else profile.tracer_width
+        tlife = max(0.02, float(tracer_duration))
 
         if recoil:
             kick = profile.recoil_kick
@@ -177,18 +186,23 @@ class EffectSystem:
                 tr_x, tr_y = px, py
 
             if tracer:
+                jitter = (
+                    tracer_color
+                    if pellets == 1
+                    else tuple(max(0, min(255, c + random.randint(-20, 20))) for c in tracer_color)
+                )
                 self.state.tracers.append(
                     Tracer(
                         x0=mx,
                         y0=my,
                         x1=tr_x,
                         y1=tr_y,
-                        life=0.07 if pellets == 1 else 0.05,
-                        max_life=0.07,
-                        width=profile.tracer_width * (0.7 if pellets > 1 else 1.0),
-                        color=random.choice(
-                            ((255, 230, 120), (255, 200, 80), (255, 255, 200))
-                        ),
+                        life=tlife if pellets == 1 else tlife * 0.7,
+                        max_life=tlife,
+                        width=tw * (0.7 if pellets > 1 else 1.0),
+                        color=(int(jitter[0]), int(jitter[1]), int(jitter[2])),
+                        opacity=float(tracer_opacity),
+                        style=str(tracer_style),
                     )
                 )
 
@@ -280,26 +294,22 @@ class EffectSystem:
         st = self.state
 
         for tr in st.tracers:
-            t = tr.life / tr.max_life
-            alpha = int(255 * t)
-            col = (*tr.color, alpha)
+            t = max(0.0, tr.life / tr.max_life)
+            alpha = int(255 * t * tr.opacity)
+            p0 = (int(tr.x0), int(tr.y0))
+            p1 = (int(tr.x1), int(tr.y1))
             layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
-            pygame.draw.line(
-                layer,
-                col,
-                (int(tr.x0), int(tr.y0)),
-                (int(tr.x1), int(tr.y1)),
-                max(1, int(tr.width)),
-            )
-            # bright core
-            core = (255, 255, 240, alpha)
-            pygame.draw.line(
-                layer,
-                core,
-                (int(tr.x0), int(tr.y0)),
-                (int(tr.x1), int(tr.y1)),
-                1,
-            )
+            wline = max(1, int(tr.width))
+            if tr.style == "dashed":
+                self._draw_dashed(layer, (*tr.color, alpha), p0, p1, wline, dash=10, gap=7)
+            elif tr.style == "glow":
+                glow_a = max(1, alpha // 3)
+                pygame.draw.line(layer, (*tr.color, glow_a), p0, p1, wline + 4)
+                pygame.draw.line(layer, (*tr.color, alpha), p0, p1, wline)
+                pygame.draw.line(layer, (255, 255, 245, alpha), p0, p1, max(1, wline // 2))
+            else:
+                pygame.draw.line(layer, (*tr.color, alpha), p0, p1, wline)
+                pygame.draw.line(layer, (255, 255, 240, alpha), p0, p1, 1)
             surface.blit(layer, (0, 0))
 
         for flash in st.flashes:
@@ -364,6 +374,34 @@ class EffectSystem:
             ]
             pygame.draw.polygon(layer, (220, 180, 60, alpha), pts)
             surface.blit(layer, (sh.x - 8, sh.y - 8))
+
+    def _draw_dashed(
+        self,
+        surface: pygame.Surface,
+        color: tuple[int, int, int, int],
+        p0: tuple[int, int],
+        p1: tuple[int, int],
+        width: int,
+        dash: int = 10,
+        gap: int = 6,
+    ) -> None:
+        x0, y0 = p0
+        x1, y1 = p1
+        dist = math.hypot(x1 - x0, y1 - y0)
+        if dist < 1:
+            return
+        ux, uy = (x1 - x0) / dist, (y1 - y0) / dist
+        pos = 0.0
+        draw = True
+        while pos < dist:
+            seg = dash if draw else gap
+            npos = min(dist, pos + seg)
+            if draw:
+                a = (int(x0 + ux * pos), int(y0 + uy * pos))
+                b = (int(x0 + ux * npos), int(y0 + uy * npos))
+                pygame.draw.line(surface, color, a, b, width)
+            pos = npos
+            draw = not draw
 
     def _draw_muzzle_flash(
         self,

@@ -10,6 +10,9 @@ from typing import Any, Callable
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json"
 
+CROSSHAIR_STYLES = ("cross", "dot", "circle", "crossdot", "t")
+TRACER_STYLES = ("solid", "dashed", "glow")
+
 DEFAULTS: dict[str, Any] = {
     "scale": 1.0,
     "offset_x": 0,
@@ -36,6 +39,27 @@ DEFAULTS: dict[str, Any] = {
     "fire_rate_ms": 90,
     "always_on_top": True,
     "click_through_idle": False,
+    # Crosshair
+    "crosshair": True,
+    "crosshair_style": "cross",
+    "crosshair_size": 14,
+    "crosshair_thickness": 2,
+    "crosshair_gap": 4,
+    "crosshair_opacity": 0.85,
+    "crosshair_r": 255,
+    "crosshair_g": 255,
+    "crosshair_b": 255,
+    # Tracer
+    "tracer_style": "glow",
+    "tracer_width": 2.5,
+    "tracer_duration": 0.08,
+    "tracer_opacity": 0.95,
+    "tracer_r": 255,
+    "tracer_g": 220,
+    "tracer_b": 90,
+    # UI / help
+    "show_controls": True,
+    "controls_opacity": 0.72,
 }
 
 WEAPONS = ("pistol", "rifle", "smg", "shotgun", "sniper")
@@ -89,6 +113,9 @@ class Config:
                 return
         self.save(force=True)
 
+    def _clamp_byte(self, key: str) -> None:
+        self._data[key] = int(max(0, min(255, int(self._data[key]))))
+
     def _sanitize(self) -> None:
         self._data["scale"] = float(max(0.4, min(2.5, float(self._data["scale"]))))
         self._data["offset_x"] = int(round(float(self._data["offset_x"])))
@@ -98,6 +125,10 @@ class Config:
             self._data["weapon"] = "rifle"
         if self._data["hands"] not in HANDS:
             self._data["hands"] = "tactical"
+        if self._data["crosshair_style"] not in CROSSHAIR_STYLES:
+            self._data["crosshair_style"] = "cross"
+        if self._data["tracer_style"] not in TRACER_STYLES:
+            self._data["tracer_style"] = "glow"
         self._data["fire_rate_ms"] = int(max(40, min(600, int(self._data["fire_rate_ms"]))))
         self._data["shot_volume"] = float(max(0.0, min(1.0, float(self._data["shot_volume"]))))
         self._data["shell_volume"] = float(max(0.0, min(1.0, float(self._data["shell_volume"]))))
@@ -107,6 +138,31 @@ class Config:
         self._data["custom_gloves_scale"] = float(
             max(0.2, min(3.0, float(self._data["custom_gloves_scale"])))
         )
+        self._data["crosshair_size"] = float(max(4.0, min(48.0, float(self._data["crosshair_size"]))))
+        self._data["crosshair_thickness"] = float(
+            max(1.0, min(8.0, float(self._data["crosshair_thickness"])))
+        )
+        self._data["crosshair_gap"] = float(max(0.0, min(24.0, float(self._data["crosshair_gap"]))))
+        self._data["crosshair_opacity"] = float(
+            max(0.1, min(1.0, float(self._data["crosshair_opacity"])))
+        )
+        self._data["tracer_width"] = float(max(0.5, min(12.0, float(self._data["tracer_width"]))))
+        self._data["tracer_duration"] = float(
+            max(0.02, min(0.4, float(self._data["tracer_duration"])))
+        )
+        self._data["tracer_opacity"] = float(max(0.1, min(1.0, float(self._data["tracer_opacity"]))))
+        self._data["controls_opacity"] = float(
+            max(0.2, min(1.0, float(self._data["controls_opacity"])))
+        )
+        for k in (
+            "crosshair_r",
+            "crosshair_g",
+            "crosshair_b",
+            "tracer_r",
+            "tracer_g",
+            "tracer_b",
+        ):
+            self._clamp_byte(k)
         self._data["shot_sound"] = str(self._data.get("shot_sound") or "")
         self._data["shell_sound"] = str(self._data.get("shell_sound") or "")
         self._data["custom_weapon"] = str(self._data.get("custom_weapon") or "")
@@ -122,6 +178,8 @@ class Config:
             "click_through_idle",
             "use_custom_weapon",
             "use_custom_gloves",
+            "crosshair",
+            "show_controls",
         ):
             self._data[flag] = bool(self._data[flag])
 
