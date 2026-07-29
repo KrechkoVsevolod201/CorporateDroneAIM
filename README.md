@@ -1,6 +1,6 @@
 # CorporateDroneAIM
 
-[![Build and Release](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/actions/workflows/build.yml/badge.svg?branch=main&cache_bust=1)](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/actions/workflows/build.yml)
+[![Build and Release](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Release](https://img.shields.io/github/v/release/KrechkoVsevolod201/CorporateDroneAIM?cache_bust=1)](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/releases)
 
