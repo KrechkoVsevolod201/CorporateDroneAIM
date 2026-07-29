@@ -341,8 +341,11 @@ class SettingsWindow:
         # store preview widget for sync
         setattr(self, f"_preview_{prefix}", preview)
 
-    def _sound_choices(self) -> list[str]:
-        return [assets.NONE_LABEL] + assets.list_sound_files()
+    def _sound_choices(self, kind: str = "shot") -> list[str]:
+        if kind == "shot":
+            return [assets.NONE_LABEL] + assets.list_shot_sound_files()
+        else:
+            return [assets.NONE_LABEL] + assets.list_shell_sound_files()
 
     def _weapon_img_choices(self) -> list[str]:
         return [assets.NONE_LABEL] + assets.list_weapon_images()
@@ -352,8 +355,8 @@ class SettingsWindow:
 
     def _refresh_asset_lists(self) -> None:
         mapping = {
-            "shot_sound": self._sound_choices(),
-            "shell_sound": self._sound_choices(),
+            "shot_sound": self._sound_choices("shot"),
+            "shell_sound": self._sound_choices("shell"),
             "custom_weapon": self._weapon_img_choices(),
             "custom_gloves": self._glove_img_choices(),
         }
@@ -407,7 +410,7 @@ class SettingsWindow:
         if "use_custom_gloves" in self._vars:
             self._vars["use_custom_gloves"].set(True)
 
-    def _import_sound(self, target_key: str) -> None:
+    def _import_sound(self, target_key: str, kind: str = "shot") -> None:
         path = filedialog.askopenfilename(
             title="Звуковой файл",
             filetypes=[("Audio", "*.mp3 *.wav *.ogg"), ("All", "*.*")],
@@ -415,7 +418,7 @@ class SettingsWindow:
         if not path:
             return
         try:
-            name = assets.import_sound(path)
+            name = assets.import_sound(path, kind=kind)
         except Exception as exc:
             messagebox.showerror("Ошибка", str(exc))
             return
@@ -436,7 +439,7 @@ class SettingsWindow:
         )
         tk.Label(
             header,
-            text="Настройки оверлея · F1 показать · Esc выход",
+            text="Ctrl+Shift+S — настройки · Ctrl+Shift+Q — выход · Ctrl+Shift+H — подсказки",
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 10),
@@ -527,17 +530,17 @@ class SettingsWindow:
         # Sound
         c = self._card(pad, "ЗВУК")
         self._add_check(c, "sound", "Включить звук")
-        self._add_combo(c, "shot_sound", "Выстрел", self._sound_choices(), allow_empty=True)
-        self._add_combo(c, "shell_sound", "Гильза", self._sound_choices(), allow_empty=True)
+        self._add_combo(c, "shot_sound", "Выстрел", self._sound_choices("shot"), allow_empty=True)
+        self._add_combo(c, "shell_sound", "Гильза", self._sound_choices("shell"), allow_empty=True)
         self._add_scale(c, "shot_volume", "Громкость выстрела", 0.0, 1.0, "{:.2f}")
         self._add_scale(c, "shell_volume", "Громкость гильзы", 0.0, 1.0, "{:.2f}")
         row = tk.Frame(c, bg=CARD)
         row.pack(fill="x", pady=4)
         ttk.Button(
-            row, text="Добавить звук выстрела", style="Ghost.TButton", command=lambda: self._import_sound("shot_sound")
+            row, text="Добавить звук выстрела", style="Ghost.TButton", command=lambda: self._import_sound("shot_sound", "shot")
         ).pack(side="left")
         ttk.Button(
-            row, text="Добавить звук гильзы", style="Ghost.TButton", command=lambda: self._import_sound("shell_sound")
+            row, text="Добавить звук гильзы", style="Ghost.TButton", command=lambda: self._import_sound("shell_sound", "shell")
         ).pack(side="left", padx=6)
 
         # Help overlay

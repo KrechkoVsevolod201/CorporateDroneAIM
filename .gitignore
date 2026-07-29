@@ -12,6 +12,8 @@ env/
 *.egg-info/
 dist/
 build/
+*.spec.bak
 .DS_Store
 Thumbs.db
 *.log
+crash.log

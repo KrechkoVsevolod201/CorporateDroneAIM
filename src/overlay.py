@@ -12,16 +12,17 @@ from .config import Config
 from .crosshair import draw_crosshair
 from .display_info import Monitor, list_monitors, monitor_from_point
 from .effects import EffectSystem
+from .hotkeys import GlobalHotkeys
 from .weapons import AimState, WeaponPose, compute_weapon_pose, draw_weapon_view
 
 COLOR_KEY = (255, 0, 255)
 
 CONTROLS_LINES = [
     ("ЛКМ", "Выстрел"),
-    ("F1", "Открыть / показать настройки"),
-    ("F2", "Следующее оружие"),
-    ("H", "Показать / скрыть подсказки"),
-    ("Esc", "Выход"),
+    ("Ctrl+Shift+S", "Настройки"),
+    ("Ctrl+Shift+W", "Следующее оружие"),
+    ("Ctrl+Shift+H", "Подсказки вкл/выкл"),
+    ("Ctrl+Shift+Q", "Выход"),
 ]
 
 
@@ -81,8 +82,9 @@ class OverlayApp:
         self.audio: SoundManager | None = None
         self._running = False
         self._last_shot = 0.0
-        self._global_buttons = {1: False}
-        self._listener = None
+        self._lmb_down = False
+        self._mouse_listener = None
+        self._hotkeys = GlobalHotkeys()
         self.screen: pygame.Surface | None = None
         self._hwnd = 0
         self._clock = pygame.time.Clock()
@@ -97,33 +99,39 @@ class OverlayApp:
         self._monitors_refresh_at = 0.0
         self._font: pygame.font.Font | None = None
         self._font_sm: pygame.font.Font | None = None
+        self._fire_lock = threading.Lock()
 
-    def _start_mouse_hook(self) -> None:
+    def _start_input_hooks(self) -> None:
         try:
             from pynput import mouse
         except ImportError:
-            return
+            mouse = None  # type: ignore
 
-        def on_click(x, y, button, pressed):
+        if mouse is not None:
+
+            def on_click(x, y, button, pressed):
+                try:
+                    from pynput.mouse import Button
+
+                    if button == Button.left:
+                        self._lmb_down = bool(pressed)
+                except Exception:
+                    pass
+
+            self._mouse_listener = mouse.Listener(on_click=on_click)
+            self._mouse_listener.daemon = True
+            self._mouse_listener.start()
+
+        self._hotkeys.start()
+
+    def _stop_input_hooks(self) -> None:
+        if self._mouse_listener is not None:
             try:
-                from pynput.mouse import Button
-
-                if button == Button.left:
-                    self._global_buttons[1] = pressed
+                self._mouse_listener.stop()
             except Exception:
                 pass
-
-        self._listener = mouse.Listener(on_click=on_click)
-        self._listener.daemon = True
-        self._listener.start()
-
-    def _stop_mouse_hook(self) -> None:
-        if self._listener is not None:
-            try:
-                self._listener.stop()
-            except Exception:
-                pass
-            self._listener = None
+            self._mouse_listener = None
+        self._hotkeys.stop()
 
     def _refresh_monitors(self, force: bool = False) -> list[Monitor]:
         now = time.monotonic()
@@ -212,7 +220,7 @@ class OverlayApp:
         cx, cy = self._cursor_pos_abs()
         start = monitor_from_point(cx, cy, mons)
         self._create_window(start)
-        self._start_mouse_hook()
+        self._start_input_hooks()
         self.config.on_change(self._on_config_changed)
         cfg0 = self.config.as_dict()
         self.audio.configure(cfg0)
@@ -240,28 +248,12 @@ class OverlayApp:
             assert self._monitor is not None
             cursor_local = self._monitor.to_local(*cursor_abs)
 
+            # Drain pygame events (window close); keys come from global hotkeys
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self._running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        self._running = False
-                    elif event.key == pygame.K_F1 and self.on_open_settings:
-                        self.on_open_settings()
-                    elif event.key == pygame.K_h:
-                        self.config.update(
-                            immediate_save=True,
-                            show_controls=not bool(cfg.get("show_controls", True)),
-                        )
-                    elif event.key == pygame.K_F2:
-                        from .config import WEAPONS
 
-                        cur = cfg["weapon"]
-                        idx = WEAPONS.index(cur) if cur in WEAPONS else 0
-                        self.config.update(
-                            immediate_save=True,
-                            weapon=WEAPONS[(idx + 1) % len(WEAPONS)],
-                        )
+            self._handle_hotkeys(cfg)
 
             self._pose = compute_weapon_pose(
                 screen_size=self.screen.get_size() if self.screen else (mon.width, mon.height),
@@ -281,8 +273,8 @@ class OverlayApp:
                 custom_gloves_scale=float(cfg.get("custom_gloves_scale", 1.0)),
             )
 
-            pressed = bool(self._global_buttons.get(1))
-            if not self._listener:
+            pressed = bool(self._lmb_down)
+            if self._mouse_listener is None:
                 pressed = pygame.mouse.get_pressed()[0]
 
             now = time.time()
@@ -296,8 +288,29 @@ class OverlayApp:
             self._draw_frame(cfg, cursor_local)
 
         self.config.save(force=True)
-        self._stop_mouse_hook()
+        self._stop_input_hooks()
         pygame.quit()
+
+    def _handle_hotkeys(self, cfg: dict) -> None:
+        for action in self._hotkeys.poll():
+            if action == "quit":
+                self._running = False
+            elif action == "settings" and self.on_open_settings:
+                self.on_open_settings()
+            elif action == "toggle_help":
+                self.config.update(
+                    immediate_save=True,
+                    show_controls=not bool(cfg.get("show_controls", True)),
+                )
+            elif action == "next_weapon":
+                from .config import WEAPONS
+
+                cur = cfg["weapon"]
+                idx = WEAPONS.index(cur) if cur in WEAPONS else 0
+                self.config.update(
+                    immediate_save=True,
+                    weapon=WEAPONS[(idx + 1) % len(WEAPONS)],
+                )
 
     def _cursor_pos_abs(self) -> tuple[int, int]:
         if sys.platform == "win32":
@@ -315,30 +328,36 @@ class OverlayApp:
     def _fire(self, cfg: dict, cursor_local: tuple[int, int]) -> None:
         if not self.screen or self._pose is None:
             return
-        self.effects.shoot(
-            (self._pose.muzzle_x, self._pose.muzzle_y),
-            cursor_local,
-            cfg["weapon"],
-            muzzle_flash=cfg["muzzle_flash"],
-            tracer=cfg["tracer"],
-            impact=cfg["impact"],
-            recoil=cfg["recoil"],
-            shell_eject=cfg["shell_eject"],
-            barrel_angle=self._pose.angle,
-            tracer_style=str(cfg.get("tracer_style", "glow")),
-            tracer_width=float(cfg.get("tracer_width", 2.5)),
-            tracer_duration=float(cfg.get("tracer_duration", 0.08)),
-            tracer_opacity=float(cfg.get("tracer_opacity", 0.95)),
-            tracer_color=(
-                int(cfg.get("tracer_r", 255)),
-                int(cfg.get("tracer_g", 220)),
-                int(cfg.get("tracer_b", 90)),
-            ),
-        )
-        if self.audio is not None:
-            self.audio.play_shot()
-            if cfg.get("shell_eject"):
-                self.audio.queue_shell_drop(delay=0.30)
+        # Guard against any accidental re-entry in the same tick
+        if not self._fire_lock.acquire(blocking=False):
+            return
+        try:
+            self.effects.shoot(
+                (self._pose.muzzle_x, self._pose.muzzle_y),
+                cursor_local,
+                cfg["weapon"],
+                muzzle_flash=cfg["muzzle_flash"],
+                tracer=cfg["tracer"],
+                impact=cfg["impact"],
+                recoil=cfg["recoil"],
+                shell_eject=cfg["shell_eject"],
+                barrel_angle=self._pose.angle,
+                tracer_style=str(cfg.get("tracer_style", "glow")),
+                tracer_width=float(cfg.get("tracer_width", 2.5)),
+                tracer_duration=float(cfg.get("tracer_duration", 0.08)),
+                tracer_opacity=float(cfg.get("tracer_opacity", 0.95)),
+                tracer_color=(
+                    int(cfg.get("tracer_r", 255)),
+                    int(cfg.get("tracer_g", 220)),
+                    int(cfg.get("tracer_b", 90)),
+                ),
+            )
+            if self.audio is not None:
+                self.audio.play_shot()
+                if cfg.get("shell_eject"):
+                    self.audio.queue_shell_drop(delay=0.30)
+        finally:
+            self._fire_lock.release()
 
     def _draw_controls_panel(self, cfg: dict) -> None:
         assert self.screen is not None
@@ -351,7 +370,7 @@ class OverlayApp:
         row_h = 22
         title = "Управление"
         lines = CONTROLS_LINES
-        width = 280
+        width = 320
         height = pad * 2 + 28 + row_h * len(lines) + 8
         panel = pygame.Surface((width, height), pygame.SRCALPHA)
         bg_a = int(170 * op)
@@ -367,13 +386,12 @@ class OverlayApp:
         for key, desc in lines:
             ks = font.render(key, True, key_col)
             ds = font.render(desc, True, desc_col)
-            # key chip
             chip_w = ks.get_width() + 12
             chip = pygame.Surface((chip_w, 18), pygame.SRCALPHA)
             pygame.draw.rect(chip, (40, 50, 70, int(200 * op)), chip.get_rect(), border_radius=5)
             chip.blit(ks, (6, 1))
             panel.blit(chip, (pad, y))
-            panel.blit(ds, (pad + 78, y + 1))
+            panel.blit(ds, (pad + 118, y + 1))
             y += row_h
 
         self.screen.blit(panel, (16, 16))

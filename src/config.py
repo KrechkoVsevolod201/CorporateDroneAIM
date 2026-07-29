@@ -1,14 +1,30 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
-ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.json"
+
+def app_dir() -> Path:
+    """Writable directory: next to .exe when frozen, project root otherwise."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+def bundle_dir() -> Path:
+    """Read-only bundled resources (PyInstaller _MEIPASS or project root)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    return app_dir()
+
+
+ROOT = app_dir()
+CONFIG_PATH = app_dir() / "config.json"
 
 CROSSHAIR_STYLES = ("cross", "dot", "circle", "crossdot", "t")
 TRACER_STYLES = ("solid", "dashed", "glow")
