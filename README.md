@@ -1,5 +1,9 @@
 # CorporateDroneAIM
 
+[![Build and Release](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/actions/workflows/build.yml/badge.svg)](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/KrechkoVsevolod201/CorporateDroneAIM)](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/releases)
+
 Если вы устали от рутинного клацанья мышкой во время работы, а часы, потраченные на задачи, — это упущенная возможность для тренировки аима в любимом шутере, то данная программа — лучшее решение!
 
 С её помощью на вашем экране появится классный оверлей со стреляющим оружием и звуковыми эффектами!
@@ -23,19 +27,13 @@ Fully customizable: from weapon skins to the sound of gunshots and falling shell
 ### Для обычных пользователей (рекомендуется)
 
 1. Перейдите на страницу [Releases](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/releases)
-2. Скачайте `CorporateDroneAIM_Setup.exe` (последняя версия)
-3. Запустите установщик и следуйте инструкциям
-4. Программа создаст ярлык на рабочем столе и в меню Пуск
+2. Скачайте `CorporateDroneAIM.exe` из последнего релиза
+3. Запустите файл - программа автоматически создаст необходимые папки
+4. **Всё готово!** Можно сразу использовать
 
-**Всё готово!** Инсталлятор автоматически установит программу со всеми необходимыми файлами.
+### Структура программы
 
-### Альтернативная установка (без установщика)
-
-1. Скачайте `CorporateDroneAIM.exe` из релиза
-2. Запустите файл
-3. При первом запуске программа создаст папки `sounds/` и `assets/` рядом с exe
-
-### Структура директорий
+При первом запуске программа создаёт следующую структуру:
 
 ```
 CorporateDroneAIM/
@@ -65,7 +63,20 @@ python main.py
 
 ## Сборка
 
-### Сборка exe
+### Автоматическая сборка (GitHub Actions)
+
+При создании тега версии (например, `v1.0.0`) GitHub Actions автоматически:
+- Собирает `CorporateDroneAIM.exe` через PyInstaller
+- Создаёт инсталлятор через Inno Setup
+- Публикует оба файла в [Releases](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/releases)
+
+```bash
+# Создайте тег и запушьте
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Локальная сборка exe
 
 ```bash
 # Запустите скрипт сборки
@@ -78,7 +89,7 @@ pyinstaller CorporateDroneAIM.spec
 
 Готовый exe будет в папке `dist/CorporateDroneAIM.exe`
 
-### Сборка инсталлятора
+### Локальная сборка инсталлятора
 
 1. Установите [Inno Setup 6](https://jrsoftware.org/isdl.php)
 2. Запустите:
@@ -87,6 +98,52 @@ pyinstaller CorporateDroneAIM.spec
 ```
 
 Инсталлятор будет в папке `installer_output/CorporateDroneAIM_Setup.exe`
+
+## Структура проекта
+
+```
+CorporateDroneAIM/
+├── src/                    # Исходный код
+│   ├── overlay.py         # Основной оверлей
+│   ├── weapons.py         # Логика оружия и анимации
+│   ├── effects.py         # Эффекты (вспышки, трассеры)
+│   ├── audio.py           # Звуковая система
+│   ├── config.py          # Конфигурация
+│   ├── settings_ui.py     # UI настроек
+│   ├── hotkeys.py         # Глобальные горячие клавиши
+│   ├── crosshair.py       # Прицел
+│   ├── display_info.py    # Информация о мониторах
+│   └── assets.py          # Управление ресурсами
+├── sounds/
+│   ├── shot/              # Звуки выстрелов
+│   └── shell/             # Звуки гильз
+├── assets/
+│   ├── weapons/           # Кастомные оружия
+│   ├── gloves/            # Кастомные перчатки
+│   └── icon/              # Иконка приложения
+├── .github/workflows/     # GitHub Actions
+├── dist/                  # Собранный exe
+├── installer_output/      # Инсталлятор
+├── main.py                # Точка входа
+├── CorporateDroneAIM.spec # Конфигурация PyInstaller
+├── installer.iss          # Скрипт Inno Setup
+├── build_exe.ps1          # Скрипт сборки exe
+├── build_installer.ps1    # Скрипт сборки инсталлятора
+├── requirements.txt       # Зависимости Python
+├── LICENSE                # Лицензия MIT
+└── README.md              # Документация
+```
+
+## Технологии
+
+- **Python 3.10+** - основной язык
+- **Pygame** - рендеринг оверлея
+- **Tkinter** - UI настроек
+- **PyInstaller** - сборка exe
+- **Inno Setup** - создание инсталлятора
+- **pynput** - глобальные горячие клавиши
+- **pywin32** - Windows API для прозрачных окон
+- **GitHub Actions** - автоматическая сборка и релизы
 
 ---
 
@@ -173,6 +230,43 @@ pyinstaller CorporateDroneAIM.spec
 
 ---
 
+## FAQ
+
+### Программа не запускается
+Убедитесь, что у вас Windows 10/11 x64. Если появляется ошибка, проверьте файл `crash.log` рядом с exe.
+
+### Горячие клавиши не работают
+Для работы глобальных горячих клавиш могут потребоваться права администратора. Запустите программу от имени администратора.
+
+### Как добавить свои звуки?
+1. Откройте настройки (Ctrl+Shift+S)
+2. Перейдите в раздел "ЗВУК"
+3. Нажмите "Добавить звук выстрела" или "Добавить звук гильзы"
+4. Выберите файл (поддерживаются mp3, wav, ogg)
+
+### Как использовать кастомное оружие?
+1. Подготовьте PNG с прозрачностью (ствол направлен вправо)
+2. Откройте настройки (Ctrl+Shift+S)
+3. Перейдите в раздел "КАСТОМНЫЕ PNG"
+4. Включите "Кастомное оружие" и загрузите файл
+
+### Настройки не сохраняются
+Программа создаёт `config.json` рядом с exe. Убедитесь, что у программы есть права на запись в эту папку.
+
+---
+
+## Вклад в проект
+
+Если вы хотите внести свой вклад в развитие проекта:
+
+1. Форкните репозиторий
+2. Создайте ветку для вашей функции (`git checkout -b feature/AmazingFeature`)
+3. Закоммитьте изменения (`git commit -m 'Add some AmazingFeature'`)
+4. Пушните в ветку (`git push origin feature/AmazingFeature`)
+5. Откройте Pull Request
+
+---
+
 ## Лицензия и авторство
 
 **CorporateDroneAIM** © 2025 KrechkoVsevolod201
@@ -213,3 +307,27 @@ https://github.com/KrechkoVsevolod201/CorporateDroneAIM
 **GitHub:** https://github.com/KrechkoVsevolod201
 
 Если у вас есть вопросы, предложения или вы нашли ошибку, создайте [Issue](https://github.com/KrechkoVsevolod201/CorporateDroneAIM/issues) в репозитории.
+
+---
+
+## Планы на будущее
+
+- [ ] Больше встроенных моделей оружия
+- [ ] Анимация перезарядки
+- [ ] Разные режимы огня (одиночный, автоматический)
+- [ ] Статистика выстрелов
+- [ ] Экспорт/импорт настроек
+- [ ] Поддержка Linux/macOS
+- [ ] Плагины для популярных игр
+
+---
+
+## Благодарности
+
+- **Pygame** - отличная библиотека для создания игр и оверлеев
+- **Inno Setup** - мощный инструмент для создания инсталляторов
+- **Сообществу Open Source** - за вдохновение и поддержку
+
+---
+
+**Приятного использования!** 🎯
